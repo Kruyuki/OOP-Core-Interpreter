@@ -19,4 +19,21 @@ class Node:
 class Assign:
     pass
 
+class Prog:
+    def parse():
+        pass
+
+class Decl_seq:
+    def __init__(self, altNo, decl, declSeq):
+        self.altNo = altNo
+        self.decl = decl
+        self.declSeq
+
+    def parse(self):
+        self.decl.parse()
+        if 
+
+
+
+
 

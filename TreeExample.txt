@@ -1,0 +1,671 @@
+
+
+from Tokenizer import Tokenizer
+import sys
+
+# node with necessary fields for parse tree
+class Node:
+
+    # creates the tree
+    def __init__(self, type, alt, name = None):
+        self.parent = None
+        self.child = []
+        self.alt = alt
+        self.type = type
+        self.name = name
+
+    # adds child to the node
+    def addChild(self, type, alt, name = None):
+        self.child.append(Node(type, alt, name))
+        self.child[-1].parent = self
+
+
+# parse tree to parse CORE programs
+class ParseTree:
+
+    # initializes parse tree and prints program
+    def __init__(self, t):
+        self.SymbolTable = {}
+        self.declPhase = True
+        self.tok = t
+        self.tok.nextToken()
+        self.root = Node(0, 0, "<program>")
+        self.parseProg()   
+        #self.print()     
+    
+    def getIdValue(self, identifier):
+        return self.SymbolTable[identifier]
+
+    def updateSymbolTable(self, symbol, val):
+        self.SymbolTable[symbol] = val
+
+    def getSymbolValue(self, symbol):
+        return self.SymbolTable[symbol]
+
+    def getName(self):
+        return self.root.name
+
+    def getAlt(self):
+        return self.root.alt
+
+    def getSymbolTable(self):
+        return self.SymbolTable
+
+    # compares expected token to the current token
+    # advances to next token
+    def matchConsume(self, expected):
+        if (self.tok.currentToken() == expected):
+            type = self.tok.getTokenList()[-1]
+            self.tok.nextToken()
+            return type
+        else:
+            found = self.tok.currentToken()
+            if(expected == ""):
+                expected = "~EOF~"
+            if(found == ""):
+                found = "~EOF~"
+            print("Syntax Error: [Line " + str(self.tok.getLine()) +"] Expected: " + expected + ", found: " + found)
+            sys.exit()
+
+
+    #-------------- Parse Methods ----------------
+
+    # parses program into a tree structure recursively 
+    def parseProg(self):
+        self.matchConsume("program")
+        self.root.addChild(-1, 1, "program")
+        self.parseDeclSeq()
+        self.declPhase = False
+        self.matchConsume("begin")
+        self.root.addChild(-1, 2, "begin")
+        self.parseSS()
+        self.matchConsume("end")
+        self.root.addChild(-1, 3, "end")
+        self.matchConsume("")
+
+   
+    # parses statement sequences into tree
+    def parseSS(self):
+        self.root.addChild(2, 0, "<stmt-seq>")
+        self.moveToChild(-1)
+        self.parseStmt()
+        if self.tok.getTokenList()[-1] == 32 or self.tok.currentToken() in ["if", "while", "read", "write"]:
+            self.root.alt = 1
+            self.parseSS()
+        self.moveToParent()
+
+
+    # parses statements into a tree
+    def parseStmt(self):
+        self.root.addChild(5, 0, "<stmt>")
+        self.moveToChild(-1)
+        if self.tok.getTokenList()[-1] == 32: #identifier -> node should be <assign>
+            self.parseAssign()
+        elif self.tok.currentToken() == "if":
+            self.root.alt = 1
+            self.parseIf()
+        elif self.tok.currentToken() == "while":
+            self.root.alt = 2
+            self.parseLoop() 
+        elif self.tok.currentToken() == "read":
+            self.root.alt = 3
+            self.parseIn()
+        elif self.tok.currentToken() == "write":
+            self.root.alt = 4
+            self.parseOut()
+        else:
+            print("Error parsing <stmt>" + " " + self.tok.currentToken())
+            sys.exit()
+        self.moveToParent()
+        
+
+    # parses assignment statements into tree
+    def parseAssign(self):
+        self.root.addChild(6, 0, "<assign>")
+        self.moveToChild(-1)
+        self.parseId()
+        self.matchConsume("=")
+        self.root.addChild(-1, 16, "=")
+        self.parseExp()
+        self.matchConsume(";")
+        self.root.addChild(-1, 14, ";")
+        self.moveToParent()
+
+
+    # parses expressions into tree
+    def parseExp(self):
+        self.root.addChild(13, 0, "<exp>")
+        self.moveToChild(-1)
+        self.parseTerm()
+        if (self.tok.currentToken() == '+'):
+            self.root.alt = 1
+            self.matchConsume("+")
+            self.root.addChild(-1, 22, "+")
+            self.parseExp()
+        elif (self.tok.currentToken() == '-'):
+            self.root.alt = 2
+            self.matchConsume("-")
+            self.root.addChild(-1, 23, "-")
+            self.parseExp()
+        self.moveToParent()
+
+    # parses term into tree
+    def parseTerm(self):
+        self.root.addChild(14, 0, "<term>")
+        self.moveToChild(-1)
+        self.parseFac()
+        if(self.tok.currentToken() == "*"):
+            self.root.alt = 1
+            self.matchConsume("*")
+            self.root.addChild(-1, 24, "*")
+            self.parseTerm()
+        self.moveToParent()
+
+
+    # parses fac into tree
+    def parseFac(self):
+        self.root.addChild(15, 0, "<fac>")
+        self.moveToChild(-1)
+        if(self.tok.getTokenList()[-1] == 31): #integer
+            self.root.alt = 0
+            self.parseInt()
+        elif(self.tok.getTokenList()[-1] == 32): #identifier
+            self.root.alt = 1
+            self.parseId()
+        elif(self.tok.currentToken() == "("): #open parenthesis for exp
+            self.root.alt = 2
+            self.matchConsume("(")
+            self.root.addChild(-1, 20, "(")
+            self.parseExp()
+            self.matchConsume(")")
+            self.root.addChild(-1, 21, ")")
+        else:
+            print("[Line " + str(self.tok.getLine()) + "] Unexpected token " + self.tok.currentToken() + " while parsing <fac>")
+            sys.exit()
+        self.moveToParent()
+
+
+    # <Int> parser
+    def parseInt(self):
+        self.root.addChild(20, 0, "<int>")
+        self.moveToChild(-1)
+        self.root.addChild(31, 0, self.tok.currentToken())
+        # symbol table
+        self.moveToParent()
+        self.tok.nextToken()
+
+    #statement parsers
+    def parseIf(self):
+        self.matchConsume("if")
+        self.root.addChild(7, 0, "<if>")
+        self.moveToChild(-1)
+        self.root.addChild(-1, 5, "if")
+        self.parseCond()
+        self.root.addChild(-1, 6, "then")
+        self.matchConsume("then")
+        self.parseSS()
+        if (self.tok.currentToken() == "else"):
+            self.matchConsume("else")
+            self.root.addChild(-1, 7, "else")
+            self.root.alt = 1 
+            self.parseSS()
+        self.matchConsume("end")
+        self.root.addChild(-1, 3, "end")    
+        self.matchConsume(";")
+        self.root.addChild(-1, 14, ";")
+        self.moveToParent()
+
+    
+    def parseCond(self):
+        self.root.addChild(11, 0, "<cond>")
+        self.moveToChild(-1)
+        if(self.tok.currentToken() == "("):
+            self.parseComp()
+        elif(self.tok.currentToken() == "!"):
+            self.matchConsume("!")
+            self.root.alt = 1
+            self.root.addChild(-1, 0, "!")
+            self.parseCond()
+        elif(self.tok.currentToken() == "["):
+            self.matchConsume("[")
+            self.root.addChild(-1, 18, "[")
+            self.parseCond()
+            if(self.tok.currentToken() == "and"):
+                self.matchConsume("and")
+                self.root.alt = 2
+                self.root.addChild(-1, 12, "and")
+                self.parseCond()
+                self.matchConsume("]")
+                self.root.addChild(-1, 19, "]")
+            elif(self.tok.currentToken() == "or"):
+                self.matchConsume("or")
+                self.root.alt = 3
+                self.root.addChild(-1, 13, "or")
+                self.parseCond()
+                self.matchConsume("]")
+                self.root.addChild(-1, 19, "]")
+        else:
+            print("Error parsing <cond>, found token:"+ self.tok.currentToken())
+            sys.exit()
+        self.moveToParent()
+    
+    def parseComp(self):
+        self.root.addChild(12, 0, "<comp>")
+        self.moveToChild(-1)
+        self.matchConsume("(")
+        self.root.addChild(-1, 20, "(")
+        self.parseFac()
+        if (self.isCompOp()):
+            compOp = self.tok.currentToken()
+            self.root.addChild(16, -1, compOp)
+            self.moveToChild(-1)
+            if(compOp == "!="):
+                self.root.alt = 0
+            elif(compOp == "=="):
+                self.root.alt = 1
+            elif(compOp == "<"):
+                self.root.alt = 2
+            elif(compOp == ">"):
+                self.root.alt = 3
+            elif(compOp == "<="):
+                self.root.alt = 4
+            else:
+                self.root.alt = 5
+            self.moveToParent()
+            self.tok.nextToken()
+            self.parseFac()
+            self.matchConsume(")")
+            self.root.addChild(-1, 21, ")")
+            self.moveToParent()
+        else:
+            print("Parse Error expected <comp-op>, found: " + self.tok.currentToken())
+            sys.exit()
+        
+
+    #To handle cases of 
+    def isCompOp(self):
+        compOps = ["!=", "==", "<", ">", "<=", ">="]
+        isCompOp = False
+        if (self.tok.currentToken() in compOps):
+            isCompOp = True
+        return isCompOp
+
+
+    # parses loop statements into tree
+    def parseLoop(self):
+        self.root.addChild(8, 0, "<loop>")
+        self.moveToChild(-1)
+        self.matchConsume("while")
+        self.root.addChild(-1, 8, "while")
+        self.parseCond()
+        self.matchConsume("loop")
+        self.root.addChild(-1, 9, "loop")
+        self.parseSS()
+        self.matchConsume("end")
+        self.root.addChild(-1, 3, "end")
+        self.matchConsume(";")
+        self.root.addChild(-1, 14, ";")
+        self.moveToParent()
+
+
+    # parses input statement into tree
+    def parseIn(self):
+        self.root.addChild(9, 0, "<in>")
+        self.moveToChild(-1)
+        self.matchConsume("read")
+        self.root.addChild(-1, 10, "read")
+        self.parseIdList()
+        self.matchConsume(";")
+        self.root.addChild(-1, 14, ";")
+        self.moveToParent()
+    
+
+    # parses output statement into tree
+    def parseOut(self):
+        self.root.addChild(10, 0, "<out>")
+        self.moveToChild(-1)
+        self.matchConsume("write")
+        self.root.addChild(-1, 11, "write")
+        self.parseIdList()
+        self.matchConsume(";")
+        self.root.addChild(-1, 14, ";")
+        self.moveToParent()
+
+
+    # parses declaration sequence statements into tree
+    def parseDeclSeq(self):
+        self.root.addChild(1, 0, "<decl-seq>") #type = 1 <decl-seq>, alt = 0
+        self.moveToChild(-1) #move to <decl-seq> 
+        self.parseDecl()
+        if(self.tok.currentToken() == "int"): #alt == 1
+            self.root.alt = 1
+            self.parseDeclSeq()
+        self.moveToParent()
+    
+
+    # parses declaration statement into tree
+    def parseDecl(self):
+        self.matchConsume("int")
+        self.root.addChild(3, 0, "<decl>") #add <decl> node
+        self.moveToChild(-1)
+        self.root.addChild(-1, 4, "int")
+        self.parseIdList()
+        self.matchConsume(";")
+        self.root.addChild(-1, 14, ";")
+        self.moveToParent() # go back to <decl-seq>
+
+
+    # parses id lists into tree
+    def parseIdList(self):
+        self.root.addChild(4, 0, "<id-list>") # add <id-list> node with unknown alt
+        self.moveToChild(-1) # move to <id-list> node
+        self.parseId()
+        if (self.tok.currentToken() == ","):
+            self.matchConsume(",")
+            self.root.addChild(-1, 15, ",")
+            self.root.alt = 1
+            self.parseIdList()
+        self.moveToParent() #go back to <id-list>
+    
+
+    # parses id into tree
+    # adds id to symbol table during declaration phase
+    def parseId(self):
+        self.root.addChild(17, 0, "<id>") # add <id> node
+        self.moveToChild(-1) # go to new node
+        id = self.tok.currentToken()
+        self.root.addChild(self.tok.currentToken(), None, id) # add var to parse tree
+        if(self.declPhase):
+            if(id in self.SymbolTable):
+                print("[Line "+ str(self.tok.getLine()) + "] "+ id +" already declared")
+                sys.exit()
+            self.SymbolTable[id] = None
+        elif((not self.declPhase) and (id not in self.SymbolTable)):
+            print("[Line " + str(self.tok.getLine()) + "] using undeclared variable " + id)
+            sys.exit()
+        self.tok.nextToken()
+        self.moveToParent() #go back to <decl> node
+
+
+    # -------------- Print Methods ----------------
+
+
+    # prints program statements
+    def printProg(self):
+        print("program")
+        self.moveToChild(1)
+        self.printDelcSeq()
+        self.moveToParent()
+        print("  begin")
+        self.moveToChild(3)
+        self.printSS()
+        self.moveToParent()
+        print("  end")
+
+
+    # prints staement sequences
+    # indent is number of spaces the sequence is indented
+    def printSS(self, indent = 4):
+        self.moveToChild(0)
+        self.printStmt(indent)
+        self.moveToParent()
+        if(self.root.alt == 1):
+            self.moveToChild(1)
+            self.printSS(indent)
+            self.moveToParent()
+    
+
+    # prints statements
+    # indent is number of spaces sequence is indented
+    def printStmt(self, indent = 4):
+        if(self.root.alt == 0): #assign
+            self.moveToChild(0)
+            self.printAssign(indent)
+            self.moveToParent()
+        elif(self.root.alt == 1): #if
+            self.moveToChild(0)
+            self.printIf(indent)
+            self.moveToParent()
+        elif(self.root.alt == 2): #loop
+            self.moveToChild(0)
+            self.printLoop(indent)
+            self.moveToParent()
+        elif(self.root.alt == 3): #in
+            self.moveToChild(0)
+            self.printIn(indent)
+            self.moveToParent()
+        elif(self.root.alt == 4): #out
+            self.moveToChild(0)
+            self.printOut(indent)
+            self.moveToParent()
+
+
+    # prints loop statements
+    # indent is number of spaces loop is indented
+    def printLoop(self, indent=0):
+        print(" "*indent+'while', end=" ")
+        self.moveToChild(1)
+        self.printCond()
+        self.moveToParent()
+        print("loop")
+        self.moveToChild(3)
+        self.printSS(indent+2)
+        self.moveToParent()
+        print(" "*indent+"end;")
+
+    
+    # prints input statements
+    # indent is number of spaces indented
+    def printIn(self, indent=0):
+        print(" "*indent+"read", end=" ")
+        self.moveToChild(1)
+        self.printIdList()
+        self.moveToParent()
+        print(";")
+
+
+    # prints output statements
+    # indent is number of spaces indented
+    def printOut(self, indent=0):
+        print(" "*indent+"write", end=" ")
+        self.moveToChild(1)
+        self.printIdList()
+        self.moveToParent()
+        print(";")
+
+
+    # prints conditional statements
+    # indent is number of spaces indented
+    def printCond(self, indent=0):
+        if(self.root.alt == 0):
+            self.moveToChild(0)
+            self.printComp()
+            self.moveToParent()
+        elif(self.root.alt == 1):
+            print("! ", end="")
+            self.moveToChild(0)
+            self.printCond()
+            self.moveToParent()
+        elif(self.root.alt == 2 or self.root.alt ==3):
+            print("[ ", end="")
+            self.moveToChild(1)
+            self.printCond()
+            self.moveToParent()
+            if self.root.alt == 2:
+                print("and ", end="")
+                self.moveToChild(3)
+                self.printCond()
+                self.moveToParent()
+                print("]", end=" ")
+            else:
+                print("or ", end="")
+                self.moveToChild(3)
+                self.printCond()
+                self.moveToParent()
+                print("]", end=" ")
+    
+    
+    # prints comparasion statements
+    # indent is number of spaces indented
+    def printComp(self, indent=0):
+        print("( ", end ="")
+        self.moveToChild(1)
+        self.printFac()
+        self.moveToParent()
+        print(" ",end="")
+        self.moveToChild(2)
+        print(self.root.name, end="")
+        self.moveToParent()
+        print(" ", end="")
+        self.moveToChild(3)
+        self.printFac()
+        self.moveToParent()
+        print(" )", end=" ")
+
+
+    # prints if statements
+    # indent is number of spaces indented
+    def printIf(self, indent = 0):
+        print(" "*indent+"if", end = " ")
+        self.moveToChild(1)
+        self.printCond()
+        self.moveToParent()
+        print("then")
+        self.moveToChild(3)
+        self.printSS(indent+2)
+        self.moveToParent()
+        if(self.root.alt == 1):
+            print(" "*indent+"else")
+            self.moveToChild(5)
+            self.printSS(indent+2)
+            self.moveToParent()
+        print(" "*indent+"end;")
+
+
+    # prints assignment statements
+    # indent is number of spaces indented
+    def printAssign(self, indent=0):
+        self.moveToChild(0)
+        self.printId(indent)
+        self.moveToParent()
+        print(" =", end = " ")
+        self.moveToChild(2)
+        self.printExp()
+        self.moveToParent()
+        print(";")
+
+
+    # prints expression statements
+    # indent is number of spaces indented
+    def printExp(self, indent = 0):
+        self.moveToChild(0)
+        self.printTerm()
+        self.moveToParent()
+        if(self.root.alt == 1 or self.root.alt == 2):
+            if(self.root.alt == 1):
+                print(" +", end = " ")
+            else:
+                print(" -", end=" ")
+            self.moveToChild(2)
+            self.printExp()
+            self.moveToParent()
+        
+
+    # prints term statements
+    def printTerm(self):
+        self.moveToChild(0)
+        self.printFac()
+        self.moveToParent()
+        if(self.root.alt == 1):
+            print(" *", end=" ")
+            self.moveToChild(2)
+            self.printTerm()
+            self.moveToParent()
+
+    # prints fac statements
+    def printFac(self):
+        if(self.root.alt == 0):
+            self.moveToChild(0)
+            self.printInt()
+            self.moveToParent()
+        elif(self.root.alt == 1):
+            self.moveToChild(0)
+            self.printId()
+            self.moveToParent()
+        elif(self.root.alt == 2):
+            print("(", end=" ")
+            self.moveToChild(1)
+            self.printExp()
+            self.moveToParent()
+            print(" )", end="")
+
+    # prints integers
+    def printInt(self):
+        self.moveToChild(0)
+        print(self.root.name, end="")
+        self.moveToParent()
+
+
+    # prints declaration sequences
+    def printDelcSeq(self):
+        if(self.root.alt == 0):
+            self.moveToChild(0)
+            self.printDecl()
+            self.moveToParent()
+        elif(self.root.alt == 1):
+            self.printDecl()
+            self.printDelcSeq()
+    
+
+    # prints declaration statements
+    def printDecl(self):
+        print(" "*2+"int", end = " ")
+        self.moveToChild(1)
+        self.printIdList()
+        self.moveToParent()
+        print(";")
+
+
+    # prints ID Lists
+    def printIdList(self):
+        alt = self.root.alt
+        self.moveToChild(0)
+        self.printId()
+        self.moveToParent()
+        if(alt == 1):
+            print(",", end = " ")
+            self.moveToChild(2)
+            self.printIdList()
+            self.moveToParent()
+
+    # prints IDs
+    # indent to pass from printAssign so that assign statements are indented properly
+    def printId(self, indent = 0):
+        self.moveToChild(0)
+        print(" "*indent+self.root.name, end = "")
+        self.moveToParent()
+
+    # prints tree in tree form
+    def print(self, indent = 0):
+        print(' '*indent, end = '')
+        print(self.root.name)
+        for c in range(len(self.root.child)):
+            if (len(self.root.child) > 0):
+                self.moveToChild(c)
+                self.print(indent+2)
+                self.moveToParent()
+        
+
+    # moves pointer to child
+    # int is number of child to move to 
+    def moveToChild(self, int):
+        self.root = self.root.child[int]
+    
+    # moves pointer to parent
+    def moveToParent(self):
+        self.root = self.root.parent
+
+
+#p = ParseTree(Tokenizer(str(sys.argv[1])))
+#p = ParseTree(Tokenizer("easy.core"))
+
